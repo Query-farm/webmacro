@@ -16,7 +16,7 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 project(${TARGET_NAME})
 include_directories(src/include duckdb/third_party/httplib)
 
-set(EXTENSION_SOURCES src/webmacro_extension.cpp)
+set(EXTENSION_SOURCES src/webmacro_extension.cpp src/query_farm_telemetry.cpp)
 
 if(MINGW)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
