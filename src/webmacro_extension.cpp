@@ -5,7 +5,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
-#include "duckdb/main/extension_util.hpp"
+#include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include "duckdb/common/exception/http_exception.hpp"
@@ -217,22 +217,23 @@ static void LoadMacroFromUrlFunction(DataChunk &args, ExpressionState &state, Ve
         });
 }
 
-static void LoadInternal(DatabaseInstance &instance) {
+static void LoadInternal(ExtensionLoader &loader) {
+    auto &instance = loader.GetDatabaseInstance();
+
     // Create lambda to capture database instance
     auto load_macro_func = [&instance](DataChunk &args, ExpressionState &state, Vector &result) {
         LoadMacroFromUrlFunction(args, state, result, &instance);
     };
 
     // Register function with captured database instance
-    ExtensionUtil::RegisterFunction(
-        instance,
-        ScalarFunction("load_macro_from_url", {LogicalType::VARCHAR}, 
+    loader.RegisterFunction(
+        ScalarFunction("load_macro_from_url", {LogicalType::VARCHAR},
                       LogicalType::VARCHAR, load_macro_func)
     );
 }
 
-void WebmacroExtension::Load(DuckDB &db) {
-    LoadInternal(*db.instance);
+void WebmacroExtension::Load(ExtensionLoader &loader) {
+    LoadInternal(loader);
 }
 
 std::string WebmacroExtension::Name() {
@@ -250,13 +251,9 @@ std::string WebmacroExtension::Version() const {
 } // namespace duckdb
 
 extern "C" {
-DUCKDB_EXTENSION_API void webmacro_init(duckdb::DatabaseInstance &db) {
-    duckdb::DuckDB db_wrapper(db);
-    db_wrapper.LoadExtension<duckdb::WebmacroExtension>();
-}
 
-DUCKDB_EXTENSION_API const char *webmacro_version() {
-    return duckdb::DuckDB::LibraryVersion();
+DUCKDB_CPP_EXTENSION_ENTRY(webmacro, loader) {
+    duckdb::LoadInternal(loader);
 }
 }
 
