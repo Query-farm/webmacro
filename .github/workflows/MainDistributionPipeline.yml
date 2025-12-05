@@ -21,4 +21,5 @@ jobs:
     with:
       duckdb_version: v1.4-andium
       ci_tools_version: main
+      exclude_archs: windows_amd64_mingw
       extension_name: webmacro
