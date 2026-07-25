@@ -267,7 +267,7 @@ namespace duckdb
             ScalarFunction("load_macro_from_url", {LogicalType::VARCHAR},
                            LogicalType::VARCHAR, load_macro_func));
 
-        QueryFarmSendTelemetry(loader, "webmacro", "2025120401");
+        QueryFarmSendTelemetry(loader, "webmacro", "2026072501");
     }
 
     void WebmacroExtension::Load(ExtensionLoader &loader)
