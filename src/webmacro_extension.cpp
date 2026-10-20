@@ -269,7 +269,7 @@ namespace duckdb
         load_macro_from_url.SetFallible();
         loader.RegisterFunction(load_macro_from_url);
 
-        QueryFarmSendTelemetry(loader, "webmacro", "2026072501");
+        QueryFarmSendTelemetry(loader, "webmacro", "2026102001");
     }
 
     void WebmacroExtension::Load(ExtensionLoader &loader)
