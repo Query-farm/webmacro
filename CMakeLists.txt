@@ -31,6 +31,13 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto ${WIN_LIBS})
 endif()
 
+# DuckDB 2.0 httplib loads TLS root certificates from the macOS keychain
+# (CPPHTTPLIB_USE_CERTS_FROM_MACOSX_KEYCHAIN), which needs these frameworks.
+if(APPLE)
+  target_link_libraries(${EXTENSION_NAME} "-framework CoreFoundation" "-framework Security")
+  target_link_libraries(${LOADABLE_EXTENSION_NAME} "-framework CoreFoundation" "-framework Security")
+endif()
+
 install(
   TARGETS ${EXTENSION_NAME}
   EXPORT "${DUCKDB_EXPORT_SET}"

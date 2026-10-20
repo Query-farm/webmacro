@@ -14,7 +14,7 @@
 #include "yyjson.hpp"
 #include "query_farm_telemetry.hpp"
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
 #include "wasm_httplib_replacement.hpp"
 #else
 #define CPPHTTPLIB_OPENSSL_SUPPORT
@@ -24,7 +24,7 @@
 namespace duckdb
 {
 
-#ifndef EMSCRIPTEN
+#ifndef __EMSCRIPTEN__
     // Helper function to setup HTTP client
     static std::pair<duckdb_httplib_openssl::Client, std::string> SetupHttpClient(const std::string &url)
     {
@@ -269,7 +269,7 @@ namespace duckdb
         load_macro_from_url.SetFallible();
         loader.RegisterFunction(load_macro_from_url);
 
-        QueryFarmSendTelemetry(loader, "webmacro", "2026102001");
+        QueryFarmSendTelemetry(loader, "webmacro", "2026102002");
     }
 
     void WebmacroExtension::Load(ExtensionLoader &loader)
