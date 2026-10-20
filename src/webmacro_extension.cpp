@@ -9,6 +9,7 @@
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include "duckdb/common/exception/http_exception.hpp"
+#include "duckdb/common/vector/string_vector.hpp"
 
 #include "yyjson.hpp"
 #include "query_farm_telemetry.hpp"
@@ -178,7 +179,7 @@ namespace duckdb
         auto &context = state.GetContext();
 
         UnaryExecutor::Execute<string_t, string_t>(
-            args.data[0], result, args.size(),
+            args.data[0], result,
             [&](string_t url)
             {
                 try
@@ -263,9 +264,10 @@ namespace duckdb
         };
 
         // Register function with captured database instance
-        loader.RegisterFunction(
-            ScalarFunction("load_macro_from_url", {LogicalType::VARCHAR},
-                           LogicalType::VARCHAR, load_macro_func));
+        ScalarFunction load_macro_from_url("load_macro_from_url", {LogicalType::VARCHAR},
+                                           LogicalType::VARCHAR, load_macro_func);
+        load_macro_from_url.SetFallible();
+        loader.RegisterFunction(load_macro_from_url);
 
         QueryFarmSendTelemetry(loader, "webmacro", "2026072501");
     }
