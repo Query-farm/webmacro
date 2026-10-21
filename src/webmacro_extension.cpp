@@ -1,307 +1,172 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "webmacro_extension.hpp"
-#include "duckdb.hpp"
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/string_util.hpp"
-#include "duckdb/function/scalar_function.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
-#include "duckdb/parser/parsed_data/create_macro_info.hpp"
-#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
-#include "duckdb/common/exception/http_exception.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/main/extension_helper.hpp"
+#include "duckdb/main/extension_load_options.hpp"
+#include "duckdb/main/extension_repository_manager.hpp"
 
-#include "yyjson.hpp"
-#include "query_farm_telemetry.hpp"
+// For DuckDB 2.0 and later this extension is distributed from the Query.Farm extension repository. The build published to the
+// DuckDB community repository only keeps the name. When the user has already added the Query.Farm repository and
+// installed the extension from it, loading this build loads that one; otherwise it explains the remaining steps.
+// It never adds the repository or installs anything itself: trusting a repository is the user's decision.
 
-#ifdef __EMSCRIPTEN__
-#include "wasm_httplib_replacement.hpp"
-#else
-#define CPPHTTPLIB_OPENSSL_SUPPORT
-#include "httplib.hpp"
-#endif
+namespace duckdb {
 
-namespace duckdb
-{
+static constexpr const char *EXTENSION_NAME = "webmacro";
+static constexpr const char *EXTENSION_VERSION = "2026102001";
+static constexpr const char *REPOSITORY_NAME = "query_farm";
+static constexpr const char *REPOSITORY_URL = "https://duckdb-extensions.query.farm";
+static constexpr const char *REPOSITORY_HTTP_URL = "http://duckdb-extensions.query.farm";
+// sha256 fingerprints of the Query.Farm repository signing keys (primary and standby)
+static constexpr const char *REPOSITORY_KEY_FINGERPRINTS[] = {
+    "sha256:b293ba6145db8f51f301618f59a720cb8c0c21e7efc6119aab43ea5c708947b5",
+    "sha256:6959de1c16b783b14d4c904f69361811f737017d79ea7078729a74ec2f7f7753"};
 
-#ifndef __EMSCRIPTEN__
-    // Helper function to setup HTTP client
-    static std::pair<duckdb_httplib_openssl::Client, std::string> SetupHttpClient(const std::string &url)
-    {
-        std::string scheme, domain, path;
-        size_t pos = url.find("://");
-        std::string mod_url = url;
-        if (pos != std::string::npos)
-        {
-            scheme = mod_url.substr(0, pos);
-            mod_url.erase(0, pos + 3);
-        }
+static string MovedPreamble() {
+	return StringUtil::Format("The %s extension for DuckDB 2.0 and later is distributed from the Query.Farm extension repository, "
+	                          "not the DuckDB community repository.\n\n",
+	                          EXTENSION_NAME);
+}
 
-        pos = mod_url.find("/");
-        if (pos != std::string::npos)
-        {
-            domain = mod_url.substr(0, pos);
-            path = mod_url.substr(pos);
-        }
-        else
-        {
-            domain = mod_url;
-            path = "/";
-        }
+static string MoreInformation() {
+	return StringUtil::Format("\n\nMore information: https://query.farm/products/extensions/%s/", EXTENSION_NAME);
+}
 
-        duckdb_httplib_openssl::Client client(domain.c_str());
-        client.set_read_timeout(10, 0);
-        client.set_follow_location(true);
+static bool IsInstalledFromRepository(DatabaseInstance &db, FileSystem &fs) {
+	for (auto &directory : ExtensionHelper::GetExtensionDirectoryPath(db, fs)) {
+		auto path = fs.JoinPath(fs.JoinPath(fs.JoinPath(directory, "repositories"), REPOSITORY_NAME),
+		                        string(EXTENSION_NAME) + ".duckdb_extension");
+		if (fs.FileExists(path)) {
+			return true;
+		}
+	}
+	return false;
+}
 
-        return std::make_pair(std::move(client), path);
-    }
+// A repository named query_farm is only used when it points at the Query.Farm prefix and pins a Query.Farm signing key.
+static bool IsQueryFarmRepository(const ExtensionRepository &repository) {
+	auto prefix = StringUtil::Lower(repository.path);
+	while (StringUtil::EndsWith(prefix, "/")) {
+		prefix.pop_back();
+	}
+	if (prefix != REPOSITORY_URL && prefix != REPOSITORY_HTTP_URL) {
+		return false;
+	}
+	for (auto &key : repository.public_keys) {
+		auto fingerprint = ExtensionRepositoryManager::GetPublicKeyFingerprint(key);
+		for (auto trusted : REPOSITORY_KEY_FINGERPRINTS) {
+			if (fingerprint == trusted) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
 
-    // Helper function to handle HTTP errors
-    static void HandleHttpError(const duckdb_httplib_openssl::Result &res, const std::string &request_type)
-    {
-        std::string err_message = "HTTP " + request_type + " request failed. ";
+static void LoadFromQueryFarmOrExplain(DatabaseInstance &db) {
+	auto &fs = FileSystem::GetFileSystem(db);
+	ExtensionRepository repository;
+	bool has_repository = ExtensionRepositoryManager::TryGetRepository(db, fs, REPOSITORY_NAME, repository);
 
-        switch (res.error())
-        {
-        case duckdb_httplib_openssl::Error::Connection:
-            err_message += "Connection error.";
-            break;
-        case duckdb_httplib_openssl::Error::Read:
-            err_message += "Error reading response.";
-            break;
-        default:
-            err_message += "Unknown error.";
-            break;
-        }
-        throw std::runtime_error(err_message);
-    }
-#endif
+	if (!has_repository) {
+		throw MissingExtensionException(
+		    "%sAdd the repository and install the extension once:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    CREATE EXTENSION REPOSITORY IF NOT EXISTS %s WITH PREFIX '%s';\n"
+		    "    INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Then load it in each session with:\n"
+		    "\n"
+		    "    LOAD %s FROM %s;%s",
+		    MovedPreamble(), REPOSITORY_NAME, REPOSITORY_URL, EXTENSION_NAME, REPOSITORY_NAME, EXTENSION_NAME,
+		    REPOSITORY_NAME, MoreInformation());
+	}
+	if (!IsQueryFarmRepository(repository)) {
+		throw MissingExtensionException(
+		    "%sA repository named %s is configured with the prefix '%s', but it is not the Query.Farm extension "
+		    "repository: it points somewhere else or does not use the Query.Farm signing keys, so the extension is not "
+		    "loaded from it. Replace it with the Query.Farm repository and reinstall the extension:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    CREATE OR REPLACE EXTENSION REPOSITORY %s WITH PREFIX '%s';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Then load it in each session with:\n"
+		    "\n"
+		    "    LOAD %s FROM %s;%s",
+		    MovedPreamble(), REPOSITORY_NAME, repository.path, REPOSITORY_NAME, REPOSITORY_URL, EXTENSION_NAME,
+		    REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
+	}
+	if (ExtensionRepositoryManager::GetAccess(db) == ExtensionRepositoryAccess::FORBIDDEN) {
+		throw MissingExtensionException("%sThe %s repository is configured, but allow_extension_repositories is set to "
+		                                "'forbidden', so extensions from it cannot be loaded.%s",
+		                                MovedPreamble(), REPOSITORY_NAME, MoreInformation());
+	}
+	if (!IsInstalledFromRepository(db, fs)) {
+		throw MissingExtensionException("%sThe %s repository is already configured. Install the extension from it once:\n"
+		                                "\n"
+		                                "    SET allow_extension_repositories = 'allowed';\n"
+		                                "    INSTALL %s FROM %s;\n"
+		                                "\n"
+		                                "Then load it in each session with:\n"
+		                                "\n"
+		                                "    LOAD %s FROM %s;%s",
+		                                MovedPreamble(), REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME,
+		                                EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
+	}
 
-    static bool ContainsMacroDefinition(const std::string &content)
-    {
-        std::string upper_content = StringUtil::Upper(content);
-        const char *patterns[] = {
-            "CREATE MACRO",
-            "CREATE OR REPLACE MACRO",
-            "CREATE TEMP MACRO",
-            "CREATE TEMPORARY MACRO",
-            "CREATE OR REPLACE TEMP MACRO",
-            "CREATE OR REPLACE TEMPORARY MACRO"};
+	// The repository is trusted and the extension is installed from it: load that build. DuckDB holds the load lock
+	// for this name while this stub initializes, so the real extension is loaded under an alias; its functions are
+	// registered as usual.
+	ExtensionLoadOptions options(EXTENSION_NAME);
+	options.repository = REPOSITORY_NAME;
+	options.alias = Identifier(string(EXTENSION_NAME) + "_" + REPOSITORY_NAME);
+	try {
+		ExtensionHelper::LoadExternalExtension(db, fs, options);
+	} catch (std::exception &ex) {
+		ErrorData error(ex);
+		if (error.Type() != ExceptionType::IO || !StringUtil::Contains(error.RawMessage(), "signature")) {
+			throw;
+		}
+		throw MissingExtensionException(
+		    "%sThe %s extension installed from the %s repository failed signature verification. The file may be "
+		    "damaged, or it was signed with a key that this repository definition does not trust. Reinstall it:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "If loading still fails the same way, refresh the repository's signing keys and reinstall:\n"
+		    "\n"
+		    "    CREATE OR REPLACE EXTENSION REPOSITORY %s WITH PREFIX '%s';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Do not use -unsigned to work around this.%s",
+		    MovedPreamble(), EXTENSION_NAME, REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME, REPOSITORY_NAME,
+		    REPOSITORY_URL, EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
+	}
+}
 
-        for (const auto &pattern : patterns)
-        {
-            if (upper_content.find(pattern) != std::string::npos)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
+void WebmacroExtension::Load(ExtensionLoader &loader) {
+	LoadFromQueryFarmOrExplain(loader.GetDatabaseInstance());
+}
 
-    // Parse Function Name
-    static std::string ExtractMacroName(const std::string &macro_sql)
-    {
-        try
-        {
-            std::string upper_sql = StringUtil::Upper(macro_sql);
-            size_t macro_pos = upper_sql.find("MACRO");
-            if (macro_pos == std::string::npos)
-            {
-                return "unknown";
-            }
+std::string WebmacroExtension::Name() {
+	return EXTENSION_NAME;
+}
 
-            size_t name_start = macro_pos + 5; // length of "MACRO"
-            while (name_start < upper_sql.length() && std::isspace(upper_sql[name_start]))
-            {
-                name_start++;
-            }
-
-            size_t name_end = upper_sql.find('(', name_start);
-            if (name_end == std::string::npos)
-            {
-                return "unknown";
-            }
-
-            while (name_end > name_start && std::isspace(upper_sql[name_end - 1]))
-            {
-                name_end--;
-            }
-
-            return macro_sql.substr(name_start, name_end - name_start);
-        }
-        catch (...)
-        {
-            return "unknown";
-        }
-    }
-
-    // Helper function to check for potentially dangerous SQL commands
-    static std::pair<bool, std::string> ContainsDangerousCommands(const std::string &sql)
-    {
-        const std::vector<std::string> dangerous_commands = {
-            "DELETE", "DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE",
-            "CREATE USER", "ALTER USER", "DROP USER",
-            "DROP DATABASE", "EXEC", "EXECUTE",
-            "SHUTDOWN", "RESTART", "DETACH"};
-
-        std::string upper_sql = StringUtil::Upper(sql);
-        std::vector<std::string> found_commands;
-
-        for (const auto &cmd : dangerous_commands)
-        {
-            if (upper_sql.find(cmd) != std::string::npos)
-            {
-                found_commands.push_back(cmd);
-            }
-        }
-
-        if (!found_commands.empty())
-        {
-            std::string warning = "Warning: SQL contains potentially dangerous commands: ";
-            for (size_t i = 0; i < found_commands.size(); i++)
-            {
-                warning += found_commands[i];
-                if (i < found_commands.size() - 1)
-                {
-                    warning += ", ";
-                }
-            }
-            warning += ". Please review the macro carefully before using it.";
-            return std::make_pair(true, warning);
-        }
-
-        return std::make_pair(false, "");
-    }
-
-    // Function to fetch and create macro from URL
-    static void LoadMacroFromUrlFunction(DataChunk &args, ExpressionState &state, Vector &result, DatabaseInstance *db_instance)
-    {
-        auto &context = state.GetContext();
-
-        UnaryExecutor::Execute<string_t, string_t>(
-            args.data[0], result,
-            [&](string_t url)
-            {
-                try
-                {
-                    // Setup HTTP client
-                    auto client_and_path = SetupHttpClient(url.GetString());
-                    auto &client = client_and_path.first;
-                    auto &path = client_and_path.second;
-
-                    // Make GET request
-                    auto res = client.Get(path.c_str());
-                    if (!res)
-                    {
-                        HandleHttpError(res, "GET");
-                    }
-
-                    if (res->status != 200)
-                    {
-                        throw HTTPException(std::to_string(res->status) + ": " + res->reason);
-                    }
-
-                    // Get the SQL content
-                    std::string macro_sql = res->body;
-
-                    // Check for dangerous commands
-                    auto dangerous_check = ContainsDangerousCommands(macro_sql);
-                    if (dangerous_check.first)
-                    {
-                        throw std::runtime_error(dangerous_check.second);
-                    }
-
-                    // Replace all \r\n with \n
-                    macro_sql = StringUtil::Replace(macro_sql, "\r\n", "\n");
-                    // Replace any remaining \r with \n
-                    macro_sql = StringUtil::Replace(macro_sql, "\r", "\n");
-                    // Normalize multiple newlines to single newlines
-                    macro_sql = StringUtil::Replace(macro_sql, "\n\n", "\n");
-                    // Trim in place
-                    StringUtil::Trim(macro_sql);
-
-                    if (!ContainsMacroDefinition(macro_sql))
-                    {
-                        throw std::runtime_error("URL content does not contain a valid macro definition");
-                    }
-
-                    // std::cout << macro_sql << "\n";
-                    Connection conn(*db_instance);
-
-                    // Execute the macro directly in the current context
-                    auto query_result = conn.Query(macro_sql);
-
-                    if (query_result->HasError())
-                    {
-                        throw std::runtime_error("Failed loading Macro: " + query_result->GetError());
-                    }
-
-                    // Extract macro name before executing
-                    std::string macro_name = ExtractMacroName(macro_sql);
-
-                    return StringVector::AddString(result, "Successfully loaded macro: " + macro_name);
-                }
-                catch (duckdb::HTTPException &e)
-                {
-                    throw;
-                }
-                catch (std::exception &e)
-                {
-                    std::string error_msg = "Error: " + std::string(e.what());
-                    throw std::runtime_error(error_msg);
-                }
-            });
-    }
-
-    static void LoadInternal(ExtensionLoader &loader)
-    {
-        auto &instance = loader.GetDatabaseInstance();
-
-        // Create lambda to capture database instance
-        auto load_macro_func = [&instance](DataChunk &args, ExpressionState &state, Vector &result)
-        {
-            LoadMacroFromUrlFunction(args, state, result, &instance);
-        };
-
-        // Register function with captured database instance
-        ScalarFunction load_macro_from_url("load_macro_from_url", {LogicalType::VARCHAR},
-                                           LogicalType::VARCHAR, load_macro_func);
-        load_macro_from_url.SetFallible();
-        loader.RegisterFunction(load_macro_from_url);
-
-        QueryFarmSendTelemetry(loader, "webmacro", "2026102002");
-    }
-
-    void WebmacroExtension::Load(ExtensionLoader &loader)
-    {
-        LoadInternal(loader);
-    }
-
-    std::string WebmacroExtension::Name()
-    {
-        return "webmacro";
-    }
-
-    std::string WebmacroExtension::Version() const
-    {
-#ifdef EXT_VERSION_WEBMACRO
-        return EXT_VERSION_WEBMACRO;
-#else
-        return "";
-#endif
-    }
+std::string WebmacroExtension::Version() const {
+	return EXTENSION_VERSION;
+}
 
 } // namespace duckdb
 
-extern "C"
-{
+extern "C" {
 
-    DUCKDB_CPP_EXTENSION_ENTRY(webmacro, loader)
-    {
-        duckdb::LoadInternal(loader);
-    }
+DUCKDB_CPP_EXTENSION_ENTRY(webmacro, loader) {
+	duckdb::LoadFromQueryFarmOrExplain(loader.GetDatabaseInstance());
 }
-
-#ifndef DUCKDB_EXTENSION_MAIN
-#error DUCKDB_EXTENSION_MAIN not defined
-#endif
+}

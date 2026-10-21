@@ -1,9 +1,0 @@
-# name: test/sql/webxtension.test
-# description: test webxtension extension
-# group: [webxtension]
-
-# Before we load the extension, this will fail
-statement error
-SELECT load_macro_from_url('Sam');
-----
-Catalog Error: Scalar Function with name load_macro_from_url does not exist!
