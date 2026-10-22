@@ -264,12 +264,14 @@ namespace duckdb
         };
 
         // Register function with captured database instance
-        ScalarFunction load_macro_from_url("load_macro_from_url", {LogicalType::VARCHAR},
+        ScalarFunction load_macro_from_url("load_macro_from_url",
+                                           {FunctionParameter("url", LogicalType::VARCHAR, {},
+                                                              FunctionParameterKind::POSITIONAL_ONLY)},
                                            LogicalType::VARCHAR, load_macro_func);
         load_macro_from_url.SetFallible();
         loader.RegisterFunction(load_macro_from_url);
 
-        QueryFarmSendTelemetry(loader, "webmacro", "2026102002");
+        QueryFarmSendTelemetry(loader, "webmacro", "2026102101");
     }
 
     void WebmacroExtension::Load(ExtensionLoader &loader)
