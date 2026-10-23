@@ -7,22 +7,15 @@
   </a>
 </p>
 
-# DuckDB WebMacro Extension
+# WebMacro Extension for DuckDB
 
-[![DuckDB](https://img.shields.io/badge/DuckDB-community_extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://duckdb.org/community_extensions/extensions/webmacro.html)
-[![v1.5 build](https://github.com/Query-farm/webmacro/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v1.5)](https://github.com/Query-farm/webmacro/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av1.5)
+[![DuckDB](https://img.shields.io/badge/DuckDB-extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://query.farm/products/extensions/webmacro/)
+[![v2.0 build](https://github.com/Query-farm/webmacro/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v2.0)](https://github.com/Query-farm/webmacro/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av2.0)
 
-This extension allows loading DuckDB Macros (both scalar and table) from URLs, gists, pastes, etc.
+Load DuckDB SQL macros from remote URLs.
 
 ## Documentation
 
 Full documentation, including installation, usage, the function reference, and cookbook examples, is available at:
 
-**[https://query.farm/products/extensions/webmacro](https://query.farm/products/extensions/webmacro)**
-
-## Installation
-
-```sql
-INSTALL webmacro FROM community;
-LOAD webmacro;
-```
+**[https://query.farm/products/extensions/webmacro/](https://query.farm/products/extensions/webmacro/)**
