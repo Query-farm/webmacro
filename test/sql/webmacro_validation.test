@@ -1,0 +1,119 @@
+# name: test/sql/webmacro_validation.test
+# description: only a single, non-temporary CREATE MACRO statement can be loaded from a URL
+# group: [sql]
+
+require webmacro
+
+# Fixtures are pinned to a commit so these tests don't change with the branch.
+
+# A scalar macro whose comment mentions the word macro keeps its real name
+query I
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/commented_macro.sql');
+----
+Successfully loaded macro: commented_macro
+
+query I
+SELECT commented_macro(1);
+----
+2
+
+# Table macros load and run
+query I
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/table_macro.sql');
+----
+Successfully loaded macro: table_macro
+
+query I
+SELECT count(*) FROM table_macro(3);
+----
+3
+
+# One statement can define several overloads
+query I
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/overloaded_macro.sql');
+----
+Successfully loaded macro: overloaded_macro
+
+query I
+SELECT overloaded_macro(1, 2);
+----
+3
+
+# The body runs unchanged, including blank lines inside a string
+query I
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/blank_line_macro.sql');
+----
+Successfully loaded macro: blank_line_macro
+
+query I
+SELECT length(blank_line_macro());
+----
+4
+
+# Text that merely looks like a command is not rejected
+query I
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/keyword_macro.sql');
+----
+Successfully loaded macro: keyword_macro
+
+# CREATE MACRO in a comment doesn't make other SQL acceptable, and it doesn't run
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/comment_only.sql');
+----
+must be a CREATE MACRO statement
+
+statement error
+SELECT * FROM comment_only_table;
+----
+does not exist
+
+# Neither does CREATE MACRO inside a string
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/not_a_macro.sql');
+----
+must be a CREATE MACRO statement
+
+statement error
+SELECT * FROM no_macro_table;
+----
+does not exist
+
+# Nothing runs when a macro is followed by another statement, not even the macro
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/multi_statement.sql');
+----
+exactly one CREATE MACRO statement, found 2 statements
+
+statement error
+SELECT * FROM multi_statement_table;
+----
+does not exist
+
+statement error
+SELECT first_macro();
+----
+does not exist
+
+# Temporary macros fail clearly instead of reporting success and disappearing
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/temp_macro.sql');
+----
+Temporary macros can't be loaded from a URL
+
+# A response with no statements is rejected
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/empty.sql');
+----
+found 0 statements
+
+# Invalid SQL is reported as such
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/broken.sql');
+----
+URL content is not valid SQL
+
+# A missing file is still an HTTP error
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/missing.sql');
+----
+404

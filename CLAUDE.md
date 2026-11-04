@@ -46,9 +46,8 @@ This is a single-file DuckDB extension following the standard extension template
 
 The extension registers a single scalar function `load_macro_from_url(VARCHAR) -> VARCHAR` that:
 1. Fetches SQL from a URL using httplib
-2. Validates the content contains a macro definition
-3. Checks for dangerous SQL commands (DELETE, DROP, etc.)
-4. Executes the macro creation in DuckDB
-5. Returns success message with the macro name
+2. Parses the content with DuckDB's parser and requires exactly one non-temporary `CREATE MACRO` statement
+3. Executes the macro creation in DuckDB
+4. Returns success message with the macro name
 
 WASM builds use a replacement HTTP library (`wasm_httplib_replacement.hpp`) instead of OpenSSL-based httplib.
