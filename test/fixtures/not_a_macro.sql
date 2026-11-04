@@ -1,0 +1,1 @@
+CREATE TABLE no_macro_table AS SELECT 'CREATE MACRO' AS x;

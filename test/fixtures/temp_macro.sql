@@ -1,0 +1,1 @@
+CREATE OR REPLACE TEMP MACRO temp_macro() AS 7;

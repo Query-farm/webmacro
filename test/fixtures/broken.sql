@@ -1,0 +1,1 @@
+CREATE OR REPLACE MACRO broken_macro(x AS
