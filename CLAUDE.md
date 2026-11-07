@@ -44,10 +44,27 @@ This is a single-file DuckDB extension following the standard extension template
 - `duckdb/` - DuckDB source as git submodule
 - `extension-ci-tools/` - DuckDB extension CI tools submodule
 
-The extension registers a single scalar function `load_macro_from_url(VARCHAR) -> VARCHAR` that:
-1. Fetches SQL from a URL using httplib
-2. Parses the content with DuckDB's parser and requires exactly one non-temporary `CREATE MACRO` statement
-3. Executes the macro creation in DuckDB
-4. Returns success message with the macro name
+The extension registers a single volatile scalar function `load_macro_from_url(url VARCHAR) -> VARCHAR` that:
+1. Checks the URL: only `https://` (plain `http://` only with `SET webmacro_allow_http = true`), and refuses when
+   `enable_external_access` is false
+2. Fetches it through DuckDB's `HTTPUtil` (autoloads httpfs for https://), so `http_timeout`, `http_retries`,
+   `http_proxy` and HTTP secrets apply. Redirects are followed by hand so every hop is re-checked; the body is capped
+   at `webmacro_max_response_size` bytes (default 1 MiB)
+3. Parses the content with DuckDB's parser and requires exactly one `CREATE MACRO` statement (scalar or table, TEMP ok)
+4. Binds it and creates the macro through the catalog in the caller's own transaction (caller's search path,
+   rollback removes it, read-only databases/transactions refuse)
+5. Returns a success message with the macro name
 
-WASM builds use a replacement HTTP library (`wasm_httplib_replacement.hpp`) instead of OpenSSL-based httplib.
+WASM builds fetch with a synchronous XMLHttpRequest (`wasm_httplib_replacement.hpp`) instead of HTTPUtil.
+
+## Tests
+
+The default suite (`test/sql/*.test`) is offline. Tests that need HTTP use a local fixture server and are skipped
+unless `WEBMACRO_FIXTURE_URL` is set:
+
+```bash
+python3 test/fixture_server.py 8765 &
+WEBMACRO_FIXTURE_URL=http://127.0.0.1:8765 make test_release
+```
+
+`webmacro_network.test` (real HTTPS to GitHub) runs only with `WEBMACRO_NETWORK_TESTS=1` and httpfs available.
