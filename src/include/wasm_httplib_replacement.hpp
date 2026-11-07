@@ -1,3 +1,5 @@
+#pragma once
+
 #include <emscripten.h>
 #include "duckdb/common/exception.hpp"
 
@@ -58,14 +60,13 @@ struct WasmClient {
             len -= LEN123[3];
             len /= 256;
             Module.HEAPU8.set(LEN123, fileOnWasmHeap);
-		console.log(properArray);
             return fileOnWasmHeap;
         },
         path.c_str());
 
     if (!exe) {
       res._inner.status = 400;
-      res._inner.reason = "Unknown error, something went quack in Wasm land! Please consult the console and or the docs at https://duckdb.org/community_extensions/extensions/webmacro";
+      res._inner.reason = "XMLHttpRequest failed (network error, CORS or a non-200 status); see the browser console and https://query.farm/products/extensions/webmacro/";
     } else {
       res._inner.status = 200;
       uint64_t LEN = 0;
@@ -89,11 +90,6 @@ static std::pair<WasmClient, std::string>
 SetupHttpClient(const std::string &url) {
   WasmClient x;
   return std::make_pair(std::move(x), url);
-}
-
-static void HandleHttpError(const WasmResult &res,
-                            const std::string &request_type) {
-  throw HTTPException("Unknown problem while perfoming XMLHttpRequest");
 }
 
 } // namespace duckdb

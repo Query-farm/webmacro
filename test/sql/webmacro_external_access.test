@@ -1,0 +1,28 @@
+# name: test/sql/webmacro_external_access.test
+# description: load_macro_from_url refuses to fetch when enable_external_access is false
+# group: [sql]
+
+require webmacro
+
+statement ok
+SET enable_external_access = false;
+
+statement error
+SELECT load_macro_from_url('https://example.com/macro.sql');
+----
+enable_external_access is false
+
+# Allowing plain HTTP doesn't get around it
+statement ok
+SET webmacro_allow_http = true;
+
+statement error
+SELECT load_macro_from_url('http://127.0.0.1:1/macro.sql');
+----
+enable_external_access is false
+
+# NULL still returns NULL
+query I
+SELECT load_macro_from_url(NULL::VARCHAR) IS NULL;
+----
+true

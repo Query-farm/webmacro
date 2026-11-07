@@ -1,0 +1,25 @@
+# name: test/sql/webmacro_network.test
+# description: fetch over real HTTPS from GitHub (opt-in: needs the internet and httpfs)
+# group: [sql]
+
+require-env WEBMACRO_NETWORK_TESTS
+
+require webmacro
+
+require httpfs
+
+# Fixtures are pinned to a commit so these tests don't change with the branch.
+query I
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/commented_macro.sql');
+----
+Successfully loaded macro: commented_macro
+
+query I
+SELECT commented_macro(1);
+----
+2
+
+statement error
+SELECT load_macro_from_url('https://raw.githubusercontent.com/Query-farm/webmacro/f3af7a02a40cbfcd4faff636361a5865291f5ed6/test/fixtures/missing.sql');
+----
+HTTP 404

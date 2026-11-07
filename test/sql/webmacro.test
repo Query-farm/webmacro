@@ -1,9 +1,133 @@
-# name: test/sql/webxtension.test
-# description: test webxtension extension
-# group: [webxtension]
+# name: test/sql/webmacro.test
+# description: offline checks of load_macro_from_url - URL validation, NULLs, settings, volatility
+# group: [sql]
 
 # Before we load the extension, this will fail
 statement error
 SELECT load_macro_from_url('Sam');
 ----
 Catalog Error: Scalar Function with name load_macro_from_url does not exist!
+
+require webmacro
+
+# Only http(s) URLs are accepted; nothing below touches the network
+statement error
+SELECT load_macro_from_url('Sam');
+----
+only https:// URLs are supported
+
+statement error
+SELECT load_macro_from_url('');
+----
+only https:// URLs are supported
+
+statement error
+SELECT load_macro_from_url('file:///etc/passwd');
+----
+only https:// URLs are supported
+
+statement error
+SELECT load_macro_from_url('/etc/passwd');
+----
+only https:// URLs are supported
+
+statement error
+SELECT load_macro_from_url('s3://bucket/macro.sql');
+----
+only https:// URLs are supported
+
+statement error
+SELECT load_macro_from_url('ftp://example.com/macro.sql');
+----
+only https:// URLs are supported
+
+statement error
+SELECT load_macro_from_url('ftp://dückdb.example/🦆.sql');
+----
+only https:// URLs are supported
+
+# A URL needs a host
+statement error
+SELECT load_macro_from_url('https://');
+----
+has no host
+
+statement error
+SELECT load_macro_from_url('https:///macro.sql');
+----
+has no host
+
+statement error
+SELECT load_macro_from_url('https://example.com/a macro.sql');
+----
+whitespace or control characters
+
+statement error
+SELECT load_macro_from_url(E'https://example.com/\nmacro.sql');
+----
+whitespace or control characters
+
+# Plain http:// is refused by default: the response runs as SQL
+statement error
+SELECT load_macro_from_url('http://example.com/macro.sql');
+----
+refusing to fetch "http://example.com/macro.sql" over plain http://
+
+statement error
+SELECT load_macro_from_url('HTTP://EXAMPLE.COM/macro.sql');
+----
+over plain http://
+
+# NULL in, NULL out, without fetching anything
+query I
+SELECT load_macro_from_url(NULL::VARCHAR) IS NULL;
+----
+true
+
+query I
+SELECT count(*) FROM (SELECT load_macro_from_url(NULL::VARCHAR) AS r FROM range(5)) WHERE r IS NULL;
+----
+5
+
+# A non-constant column: NULL rows stay NULL, any bad row fails the query
+query I
+SELECT count(*) FROM (SELECT load_macro_from_url(u) AS r FROM (VALUES (NULL::VARCHAR), (NULL)) t(u)) WHERE r IS NULL;
+----
+2
+
+statement error
+SELECT load_macro_from_url(u) FROM (VALUES (NULL::VARCHAR), ('file:///etc/passwd')) t(u);
+----
+only https:// URLs are supported
+
+# The function is volatile, so planning never fetches: EXPLAIN of a call that would fail succeeds
+query I
+SELECT stability FROM duckdb_functions() WHERE function_name = 'load_macro_from_url';
+----
+VOLATILE
+
+statement ok
+EXPLAIN SELECT load_macro_from_url('http://example.invalid/macro.sql');
+
+statement ok
+PREPARE p AS SELECT load_macro_from_url('http://example.invalid/macro.sql');
+
+# Settings
+query II rowsort
+SELECT name, value FROM duckdb_settings() WHERE name LIKE 'webmacro_%';
+----
+webmacro_allow_http	false
+webmacro_max_response_size	1048576
+
+statement ok
+SET webmacro_max_response_size = 4096;
+
+query I
+SELECT current_setting('webmacro_max_response_size');
+----
+4096
+
+statement error
+SET webmacro_max_response_size = -1;
+----
+<REGEX>:.*(Conversion|out of range|Could not convert).*

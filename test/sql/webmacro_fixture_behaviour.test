@@ -1,0 +1,167 @@
+# name: test/sql/webmacro_fixture_behaviour.test
+# description: redirects, size limits and transaction/search-path behaviour (served by test/fixture_server.py)
+# group: [sql]
+
+require-env WEBMACRO_FIXTURE_URL
+
+require webmacro
+
+# Plain HTTP stays refused until it is allowed
+statement error
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/commented_macro.sql');
+----
+over plain http://
+
+statement ok
+SET webmacro_allow_http = true;
+
+# Redirects are followed (the server redirects /redirect_dir to /redirect_dir/)
+query I
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/redirect_dir');
+----
+Successfully loaded macro: redirected_macro
+
+query I
+SELECT redirected_macro();
+----
+followed
+
+query I
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/redirect?to=/keyword_macro.sql');
+----
+Successfully loaded macro: keyword_macro
+
+# ... but every hop is checked again
+statement error
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/redirect?to=file:///etc/passwd');
+----
+only https:// URLs are supported
+
+statement error
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/redirect?to=ftp://example.com/x.sql');
+----
+only https:// URLs are supported
+
+# Responses over webmacro_max_response_size are refused
+statement error
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/big?bytes=2000000');
+----
+is larger than webmacro_max_response_size = 1048576 bytes
+
+statement ok
+SET webmacro_max_response_size = 10;
+
+statement error
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/commented_macro.sql');
+----
+is larger than webmacro_max_response_size = 10 bytes
+
+statement ok
+RESET webmacro_max_response_size;
+
+# The macro is created in the caller's transaction: a rollback removes it
+statement ok
+BEGIN;
+
+query I
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/table_macro.sql');
+----
+Successfully loaded macro: table_macro
+
+query I
+SELECT count(*) FROM table_macro(2);
+----
+2
+
+statement ok
+ROLLBACK;
+
+statement error
+SELECT count(*) FROM table_macro(2);
+----
+does not exist
+
+# ... and a commit keeps it
+statement ok
+BEGIN;
+
+statement ok
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/table_macro.sql');
+
+statement ok
+COMMIT;
+
+query I
+SELECT count(*) FROM table_macro(2);
+----
+2
+
+# TEMP macros are created for the calling connection
+query I
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/temp_macro.sql');
+----
+Successfully loaded macro: temp_macro
+
+query II
+SELECT temp_macro(), database_name FROM duckdb_functions() WHERE function_name = 'temp_macro';
+----
+7	temp
+
+# Unqualified macros follow the caller's search path
+statement ok
+CREATE SCHEMA other;
+
+statement ok
+SET search_path = 'other';
+
+query I
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/overloaded_macro.sql');
+----
+Successfully loaded macro: overloaded_macro
+
+query I
+SELECT schema_name FROM duckdb_functions() WHERE function_name = 'overloaded_macro';
+----
+other
+
+statement ok
+RESET search_path;
+
+# A read-only database can't receive a macro
+statement ok
+ATTACH '{TEST_DIR}/webmacro_ro.db' AS ro_db;
+
+statement ok
+DETACH ro_db;
+
+statement ok
+ATTACH '{TEST_DIR}/webmacro_ro.db' AS ro_db (READ_ONLY);
+
+statement ok
+USE ro_db;
+
+statement error
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/keyword_macro.sql');
+----
+read-only
+
+statement ok
+USE memory;
+
+# A read-only transaction can't either
+statement ok
+BEGIN TRANSACTION READ ONLY;
+
+statement error
+SELECT load_macro_from_url('{WEBMACRO_FIXTURE_URL}/keyword_macro.sql');
+----
+read-only mode
+
+statement ok
+ROLLBACK;
+
+# A connection-refused server is an IO error, not a crash
+statement error
+SELECT load_macro_from_url('http://127.0.0.1:1/macro.sql');
+----
+failed

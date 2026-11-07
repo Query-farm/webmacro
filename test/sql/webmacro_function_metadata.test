@@ -1,0 +1,25 @@
+# name: test/sql/webmacro_function_metadata.test
+# description: every webmacro function has a description, examples, categories and parameter names
+# group: [sql]
+
+require webmacro
+
+query I
+SELECT list(DISTINCT function_name ORDER BY function_name) FROM duckdb_functions()
+WHERE function_name IN ('load_macro_from_url')
+  AND (description IS NULL OR description = ''
+       OR examples IS NULL OR len(examples) = 0
+       OR categories IS NULL OR len(categories) = 0);
+----
+NULL
+
+query IIIII
+SELECT function_name, function_type, parameters, return_type, stability FROM duckdb_functions()
+WHERE function_name = 'load_macro_from_url';
+----
+load_macro_from_url	scalar	[url]	VARCHAR	VOLATILE
+
+query II
+SELECT categories, len(examples) FROM duckdb_functions() WHERE function_name = 'load_macro_from_url';
+----
+[macro, network]	1
